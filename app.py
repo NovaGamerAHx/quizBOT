@@ -5,15 +5,13 @@ import google.generativeai as genai
 
 app = Flask(__name__)
 
-# تنظیمات
-# از متغیر محیطی استفاده میکنیم، اما برای تست لوکال میتونی اینجا کلید بذاری
+# تنظیمات API
 api_key = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 MODEL_NAME = 'gemini-2.5-flash'
 
 @app.route('/')
 def home():
-    # این دستور فایل index.html را از پوشه templates لود میکند
     return render_template('index.html')
 
 @app.route('/generate_quiz', methods=['POST'])
@@ -22,29 +20,41 @@ def generate_quiz():
     topic = data.get('topic', 'General Knowledge')
 
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
+        # --- تغییر مهم: فعال‌سازی حالت JSON ---
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config={"response_mime_type": "application/json"}
+        )
         
-        # پرامپت خیلی دقیق برای گرفتن خروجی جیسون
         prompt = (
             f"Generate one multiple-choice trivia question about: '{topic}'. "
             "The language must be Persian (Farsi). "
-            "Return ONLY a valid JSON object with this structure: "
-            "{'question': '...', 'options': ['A', 'B', 'C', 'D'], 'correct_index': 0} "
-            "correct_index is the number of the correct option (0, 1, 2, or 3). "
-            "Do not use Markdown formatting."
+            "The output MUST be a valid JSON object with this structure: "
+            "{\"question\": \"String\", \"options\": [\"String\", \"String\", \"String\", \"String\"], \"correct_index\": Integer} "
+            "Ensure specific keys and values are enclosed in double quotes."
         )
 
         response = model.generate_content(prompt)
         
-        # تمیزکاری متن خروجی
-        cleaned_text = response.text.replace('```json', '').replace('```', '').strip()
+        # چون حالت JSON فعال است، خروجی مطمئن‌تر است اما محض احتیاط تمیزکاری می‌کنیم
+        cleaned_text = response.text.strip()
+        
+        # اگر مدل اشتباهاً مارک‌داون گذاشت، آن را حذف کن
+        if cleaned_text.startswith("```json"):
+            cleaned_text = cleaned_text.replace("```json", "").replace("```", "")
+            
         quiz_data = json.loads(cleaned_text)
         
         return jsonify(quiz_data)
 
+    except json.JSONDecodeError as e:
+        print(f"JSON Error: {e}")
+        print(f"Raw Response: {response.text}") # این در لاگ‌ها چاپ می‌شود تا ببینیم چی فرستاده
+        return jsonify({"error": "هوش مصنوعی خروجی نامعتبر تولید کرد، لطفا دوباره دکمه را بزنید."}), 500
+        
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": "خطا در تولید سوال. لطفا دوباره تلاش کنید."}), 500
+        print(f"General Error: {e}")
+        return jsonify({"error": "خطا در برقراری ارتباط با سرور."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
